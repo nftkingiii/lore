@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@1,6..72,500&display=swap');
+
+:root {
+  font-family: 'Manrope', system-ui, sans-serif;
+  color: #24231f;
+  background: #f4f3ed;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #24231f;
+  --muted: #77746b;
+  --line: #deddd5;
+  --paper: #fbfaf5;
+  --green: #2c6049;
+  --green-soft: #e2ede5;
+  --rust: #a64d2e;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input, textarea, select { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid rgba(44, 96, 73, .28); outline-offset: 2px; }
+code { font-family: 'DM Mono', monospace; }

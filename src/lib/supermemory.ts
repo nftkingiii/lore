@@ -1,0 +1,81 @@
+export type LoreMemory = {
+  title: string
+  content: string
+  file: string
+  type: 'decision' | 'fix' | 'constraint' | 'discovery'
+  date: string
+  commit: string
+  confidence: number
+}
+
+type Connection = { apiUrl: string; apiKey: string; containerTag: string }
+
+export const demoMemories: LoreMemory[] = [
+  {
+    title: 'Centralized authentication in the API client',
+    content: 'Bearer authentication was moved out of individual features so every Supermemory request follows one auditable path. This prevents headers drifting between capture and search, and makes a local-only endpoint easy to verify.',
+    file: 'src/lib/supermemory.ts',
+    type: 'decision', date: 'Jul 13, 22:41', commit: 'a1f7c2e', confidence: 98,
+  },
+  {
+    title: 'Repository isolation uses a deterministic container tag',
+    content: 'Every document and search includes the same repository-scoped containerTag. Without it, unrelated repository context can collapse into the default memory bucket and produce plausible but incorrect answers.',
+    file: 'src/lib/supermemory.ts',
+    type: 'constraint', date: 'Jul 13, 22:18', commit: '7bd281a', confidence: 96,
+  },
+  {
+    title: 'Kept demo mode explicit instead of silently mocking the API',
+    content: 'The interface remains demoable when the local engine is offline, but every fallback result is labeled as demo data. This keeps the three-minute walkthrough reliable without misrepresenting where an answer came from.',
+    file: 'src/App.tsx',
+    type: 'decision', date: 'Jul 13, 21:52', commit: '22f0c41', confidence: 94,
+  },
+  {
+    title: 'Fixed cross-origin failures in local development',
+    content: 'The app now targets a configurable local API URL and keeps the connection at the browser edge. For stricter environments, the documented Vite proxy can forward requests without exposing the key in committed source.',
+    file: 'vite.config.ts',
+    type: 'fix', date: 'Jul 13, 21:25', commit: 'db092c8', confidence: 91,
+  },
+]
+
+function headers(apiKey: string) {
+  return { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+}
+
+export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connection & { memory: Omit<LoreMemory, 'date' | 'commit' | 'confidence'> | { title: string; content: string; file: string; type: string } }) {
+  if (!apiKey) throw new Error('Missing local API key')
+  const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v3/documents`, {
+    method: 'POST', headers: headers(apiKey),
+    body: JSON.stringify({
+      content: `[${memory.type.toUpperCase()}] ${memory.title}\n\n${memory.content}\n\nFile: ${memory.file || 'repository-wide'}`,
+      containerTag,
+      metadata: { title: memory.title, file: memory.file || 'repository-wide', type: memory.type, source: 'lore' },
+    }),
+  })
+  if (!response.ok) throw new Error(`Supermemory write failed (${response.status})`)
+  return response.json()
+}
+
+export async function searchMemories({ apiUrl, apiKey, containerTag, query }: Connection & { query: string }): Promise<LoreMemory[]> {
+  if (!apiKey) throw new Error('Missing local API key')
+  const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v4/search`, {
+    method: 'POST', headers: headers(apiKey),
+    body: JSON.stringify({ q: query, containerTag, limit: 6, rerank: true, rewriteQuery: true }),
+  })
+  if (!response.ok) throw new Error(`Supermemory search failed (${response.status})`)
+  const payload = await response.json()
+  const items = payload.results ?? payload.memories ?? []
+  return items.map((item: Record<string, any>) => {
+    const metadata = item.metadata ?? item.document?.metadata ?? {}
+    const content = item.content ?? item.chunk ?? item.memory ?? item.document?.content ?? ''
+    const firstLine = String(content).split('\n')[0].replace(/^\[[A-Z]+\]\s*/, '')
+    return {
+      title: metadata.title ?? firstLine ?? 'Repository memory',
+      content: String(content).replace(/^\[[A-Z]+\].*\n+/, '').replace(/\nFile:.*$/, ''),
+      file: metadata.file ?? 'repository-wide',
+      type: metadata.type ?? 'discovery',
+      date: metadata.date ?? 'Local memory',
+      commit: metadata.commit ?? 'semantic match',
+      confidence: Math.round((item.score ?? item.similarity ?? 0.9) * 100),
+    }
+  })
+}
