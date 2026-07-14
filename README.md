@@ -59,6 +59,16 @@ npm run lint     # source linting
 npm run preview  # preview production build
 ```
 
+## Deploy the Lore interface on Vercel
+
+Lore's hosted service is the static interface; Supermemory Local continues to run on the user's own machine at `localhost:6767`.
+
+1. Import `nftkingiii/lore` in Vercel.
+2. Keep the detected Vite preset, `npm run build` command, and `dist` output directory.
+3. Deploy. `vercel.json` provides the SPA fallback for client-side routes.
+
+No Supermemory or Gemini API key belongs in Vercel. Lore stores the local Supermemory connection only in the user's browser and sends requests directly to their local server.
+
 ## Privacy model
 
 Lore is local-first by architecture: the UI runs in the browser, the memory engine runs on the user's machine, and credentials are never committed. A hosted static build can still connect to the user's own local endpoint, subject to the local server's browser/CORS policy.
