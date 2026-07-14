@@ -10,11 +10,22 @@ export type LoreMemory = {
 
 type Connection = { apiUrl: string; apiKey: string; containerTag: string }
 
+function isLoopback(hostname: string) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+}
+
+function requestBase(apiUrl: string) {
+  const target = new URL(apiUrl)
+  const localPage = isLoopback(window.location.hostname)
+  const localTarget = isLoopback(target.hostname) && target.port === '6767'
+  return localPage && localTarget ? '/supermemory' : apiUrl.replace(/\/$/, '')
+}
+
 export async function probeSupermemory(apiUrl: string, apiKey = '') {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), 4000)
   try {
-    const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v3/documents/list`, {
+    const response = await fetch(`${requestBase(apiUrl)}/v3/documents/list`, {
       method: 'POST',
       headers: headers(apiUrl, apiKey),
       body: JSON.stringify({ limit: 1 }),
@@ -57,15 +68,15 @@ export const demoMemories: LoreMemory[] = [
 
 function headers(apiUrl: string, apiKey: string) {
   const hostname = new URL(apiUrl).hostname
-  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  const isLocalApi = isLoopback(hostname)
   return {
     'Content-Type': 'application/json',
-    ...(!isLoopback && apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    ...(!isLocalApi && apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   }
 }
 
 export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connection & { memory: Omit<LoreMemory, 'date' | 'commit' | 'confidence'> | { title: string; content: string; file: string; type: string } }) {
-  const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v3/documents`, {
+  const response = await fetch(`${requestBase(apiUrl)}/v3/documents`, {
     method: 'POST', headers: headers(apiUrl, apiKey),
     body: JSON.stringify({
       content: `[${memory.type.toUpperCase()}] ${memory.title}\n\n${memory.content}\n\nFile: ${memory.file || 'repository-wide'}`,
@@ -78,7 +89,7 @@ export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connec
 }
 
 export async function searchMemories({ apiUrl, apiKey, containerTag, query }: Connection & { query: string }): Promise<LoreMemory[]> {
-  const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v4/search`, {
+  const response = await fetch(`${requestBase(apiUrl)}/v4/search`, {
     method: 'POST', headers: headers(apiUrl, apiKey),
     body: JSON.stringify({ q: query, containerTag, limit: 6, rerank: true, rewriteQuery: true }),
   })
