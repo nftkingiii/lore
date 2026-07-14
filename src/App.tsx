@@ -9,7 +9,7 @@ import {
   searchMemories,
 } from './lib/supermemory'
 
-type IconName = 'search' | 'plus' | 'branch' | 'file' | 'spark' | 'clock' | 'shield' | 'arrow' | 'x'
+type IconName = 'search' | 'plus' | 'branch' | 'file' | 'spark' | 'clock' | 'shield' | 'arrow' | 'x' | 'chevron'
 
 const paths: Record<IconName, React.ReactNode> = {
   search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
@@ -21,6 +21,7 @@ const paths: Record<IconName, React.ReactNode> = {
   shield: <><path d="M12 3 5 6v5c0 4.8 2.8 8.1 7 10 4.2-1.9 7-5.2 7-10V6z"/><path d="m9 12 2 2 4-4"/></>,
   arrow: <><path d="M5 12h14M14 7l5 5-5 5"/></>,
   x: <><path d="m6 6 12 12M18 6 6 18"/></>,
+  chevron: <path d="m14 6-6 6 6 6"/>,
 }
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -38,7 +39,10 @@ function App() {
   const [query, setQuery] = useState('Why did we move authentication into the API client?')
   const [results, setResults] = useState<LoreMemory[]>(demoMemories.slice(0, 2))
   const [isSearching, setIsSearching] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('lore-sidebar-collapsed') === 'true')
+  const [connectionMessage, setConnectionMessage] = useState('')
   const [notice, setNotice] = useState('Demo memories · connect Local to search your own repo')
   const [showCapture, setShowCapture] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -50,13 +54,20 @@ function App() {
 
   useEffect(() => {
     let active = true
-    probeSupermemory(apiUrl).then((connected) => {
+    probeSupermemory(apiUrl, apiKey).then((connected) => {
       if (!active) return
       setIsConnected(connected)
       setNotice(connected ? 'Supermemory Local connected · ready for repository context' : 'Saved connection unavailable · start Supermemory Local')
     })
     return () => { active = false }
-  }, [apiUrl])
+  }, [apiKey, apiUrl])
+
+  function toggleSidebar() {
+    setIsSidebarCollapsed((collapsed) => {
+      localStorage.setItem('lore-sidebar-collapsed', String(!collapsed))
+      return !collapsed
+    })
+  }
 
   async function handleSearch(event?: FormEvent) {
     event?.preventDefault()
@@ -71,7 +82,7 @@ function App() {
       const q = query.toLowerCase()
       const fallback = demoMemories.filter((item) => `${item.title} ${item.content} ${item.file}`.toLowerCase().split(' ').some((word) => q.includes(word)))
       setResults(fallback.length ? fallback : demoMemories.slice(0, 2))
-      const connected = await probeSupermemory(apiUrl)
+      const connected = await probeSupermemory(apiUrl, apiKey)
       setIsConnected(connected)
       setNotice(connected ? 'Local search unavailable · showing clearly labeled demo memories' : 'Local server unavailable · showing clearly labeled demo memories')
     } finally {
@@ -85,11 +96,15 @@ function App() {
     localStorage.setItem('lore-api-key', apiKey)
     localStorage.setItem('lore-api-url', normalizedUrl)
     setApiUrl(normalizedUrl)
+    setIsConnecting(true)
+    setConnectionMessage('Testing the local API…')
     setNotice('Checking Supermemory Local…')
-    const connected = await probeSupermemory(normalizedUrl)
+    const connected = await probeSupermemory(normalizedUrl, apiKey)
     setIsConnected(connected)
     setNotice(connected ? 'Supermemory Local connected · ready for repository context' : 'Could not reach Supermemory Local · check that it is running')
-    if (connected) setShowSettings(false)
+    setConnectionMessage(connected ? 'Connected successfully. Repository memory is ready.' : 'Connection failed. Confirm the URL and that Supermemory Local is running.')
+    setIsConnecting(false)
+    if (connected) window.setTimeout(() => setShowSettings(false), 650)
   }
 
   async function handleCapture(event: FormEvent) {
@@ -107,12 +122,12 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">L</span><span>Lore</span></div>
+    <div className={isSidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+      <aside className={isSidebarCollapsed ? 'sidebar collapsed' : 'sidebar'}>
+        <div className="brand"><span className="brand-mark">L</span><span className="brand-name">Lore</span><button className="sidebar-toggle" onClick={toggleSidebar} aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-expanded={!isSidebarCollapsed}><Icon name="chevron" size={17}/></button></div>
         <nav aria-label="Primary navigation">
-          <button className={activeView === 'ask' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('ask')}><Icon name="search"/>Ask Lore</button>
-          <button className={activeView === 'timeline' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('timeline')}><Icon name="clock"/>Timeline</button>
+          <button title="Ask Lore" className={activeView === 'ask' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('ask')}><Icon name="search"/><span>Ask Lore</span></button>
+          <button title="Timeline" className={activeView === 'timeline' ? 'nav-item active' : 'nav-item'} onClick={() => setActiveView('timeline')}><Icon name="clock"/><span>Timeline</span></button>
         </nav>
         <div className="repo-block">
           <p className="eyebrow">Current repository</p>
@@ -180,7 +195,7 @@ function App() {
 
       {showCapture && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="capture-title"><button className="close" aria-label="Close" onClick={() => setShowCapture(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="plus"/></div><p className="eyebrow">New repository memory</p><h2 id="capture-title">Capture the why</h2><p>Record the context future contributors—and future you—will need.</p><form onSubmit={handleCapture}><label>Short title<input required value={capture.title} onChange={(e) => setCapture({...capture, title: e.target.value})} placeholder="Why we chose this approach"/></label><label>Context<textarea required value={capture.content} onChange={(e) => setCapture({...capture, content: e.target.value})} placeholder="Decision, alternatives considered, and tradeoffs…" rows={5}/></label><div className="form-row"><label>File path<input value={capture.file} onChange={(e) => setCapture({...capture, file: e.target.value})} placeholder="src/lib/api.ts"/></label><label>Kind<select value={capture.type} onChange={(e) => setCapture({...capture, type: e.target.value})}><option value="decision">Decision</option><option value="fix">Fix</option><option value="constraint">Constraint</option><option value="discovery">Discovery</option></select></label></div><button className="primary" type="submit">Commit to local memory<Icon name="arrow" size={16}/></button></form></section></div>}
 
-      {showSettings && <div className="modal-backdrop" role="presentation"><section className="modal small" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="close" aria-label="Close" onClick={() => setShowSettings(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="shield"/></div><p className="eyebrow">Private connection</p><h2 id="settings-title">Supermemory Local</h2><p>These credentials stay in this browser and are sent only to your local server.</p><form onSubmit={saveSettings}><label>Local API URL<input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="http://localhost:6767"/></label><label>Bearer API key <span>(optional on localhost)</span><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sm_…"/></label><div className="container-preview"><span>Container</span><code>{containerTag}</code></div><button className="primary" type="submit">Test &amp; save connection<Icon name="arrow" size={16}/></button></form></section></div>}
+      {showSettings && <div className="modal-backdrop" role="presentation"><section className="modal small" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="close" aria-label="Close" onClick={() => setShowSettings(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="shield"/></div><p className="eyebrow">Private connection</p><h2 id="settings-title">Supermemory Local</h2><p>These credentials stay in this browser and are sent only to your local server.</p><form onSubmit={saveSettings}><label>Local API URL<input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="http://localhost:6767"/></label><label>Bearer API key <span>(optional on localhost)</span><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sm_…"/></label><div className="container-preview"><span>Container</span><code>{containerTag}</code></div>{connectionMessage && <p className={isConnected ? 'connection-feedback success' : 'connection-feedback'} role="status">{connectionMessage}</p>}<button className="primary" type="submit" disabled={isConnecting}>{isConnecting ? 'Testing connection…' : 'Test & save connection'}{!isConnecting && <Icon name="arrow" size={16}/>}</button></form></section></div>}
     </div>
   )
 }

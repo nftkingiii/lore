@@ -10,12 +10,17 @@ export type LoreMemory = {
 
 type Connection = { apiUrl: string; apiKey: string; containerTag: string }
 
-export async function probeSupermemory(apiUrl: string) {
+export async function probeSupermemory(apiUrl: string, apiKey = '') {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), 4000)
   try {
-    await fetch(apiUrl.replace(/\/$/, ''), { method: 'GET', signal: controller.signal })
-    return true
+    const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v3/documents/list`, {
+      method: 'POST',
+      headers: headers(apiUrl, apiKey),
+      body: JSON.stringify({ limit: 1 }),
+      signal: controller.signal,
+    })
+    return response.ok
   } catch {
     return false
   } finally {
