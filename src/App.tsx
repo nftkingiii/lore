@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import {
   type LoreMemory,
   addMemory,
   demoMemories,
+  probeSupermemory,
   searchMemories,
 } from './lib/supermemory'
 
@@ -47,6 +48,16 @@ function App() {
 
   const containerTag = useMemo(() => 'lore_localhost-hack-quick', [])
 
+  useEffect(() => {
+    let active = true
+    probeSupermemory(apiUrl).then((connected) => {
+      if (!active) return
+      setIsConnected(connected)
+      setNotice(connected ? 'Supermemory Local connected · ready for repository context' : 'Saved connection unavailable · start Supermemory Local')
+    })
+    return () => { active = false }
+  }, [apiUrl])
+
   async function handleSearch(event?: FormEvent) {
     event?.preventDefault()
     if (!query.trim()) return
@@ -60,19 +71,25 @@ function App() {
       const q = query.toLowerCase()
       const fallback = demoMemories.filter((item) => `${item.title} ${item.content} ${item.file}`.toLowerCase().split(' ').some((word) => q.includes(word)))
       setResults(fallback.length ? fallback : demoMemories.slice(0, 2))
-      setIsConnected(false)
-      setNotice('Local server unavailable · showing clearly labeled demo memories')
+      const connected = await probeSupermemory(apiUrl)
+      setIsConnected(connected)
+      setNotice(connected ? 'Local search unavailable · showing clearly labeled demo memories' : 'Local server unavailable · showing clearly labeled demo memories')
     } finally {
       setIsSearching(false)
     }
   }
 
-  function saveSettings(event: FormEvent) {
+  async function saveSettings(event: FormEvent) {
     event.preventDefault()
+    const normalizedUrl = apiUrl.replace(/\/$/, '')
     localStorage.setItem('lore-api-key', apiKey)
-    localStorage.setItem('lore-api-url', apiUrl.replace(/\/$/, ''))
-    setShowSettings(false)
-    setNotice('Connection saved locally in this browser')
+    localStorage.setItem('lore-api-url', normalizedUrl)
+    setApiUrl(normalizedUrl)
+    setNotice('Checking Supermemory Local…')
+    const connected = await probeSupermemory(normalizedUrl)
+    setIsConnected(connected)
+    setNotice(connected ? 'Supermemory Local connected · ready for repository context' : 'Could not reach Supermemory Local · check that it is running')
+    if (connected) setShowSettings(false)
   }
 
   async function handleCapture(event: FormEvent) {
@@ -163,7 +180,7 @@ function App() {
 
       {showCapture && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="capture-title"><button className="close" aria-label="Close" onClick={() => setShowCapture(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="plus"/></div><p className="eyebrow">New repository memory</p><h2 id="capture-title">Capture the why</h2><p>Record the context future contributors—and future you—will need.</p><form onSubmit={handleCapture}><label>Short title<input required value={capture.title} onChange={(e) => setCapture({...capture, title: e.target.value})} placeholder="Why we chose this approach"/></label><label>Context<textarea required value={capture.content} onChange={(e) => setCapture({...capture, content: e.target.value})} placeholder="Decision, alternatives considered, and tradeoffs…" rows={5}/></label><div className="form-row"><label>File path<input value={capture.file} onChange={(e) => setCapture({...capture, file: e.target.value})} placeholder="src/lib/api.ts"/></label><label>Kind<select value={capture.type} onChange={(e) => setCapture({...capture, type: e.target.value})}><option value="decision">Decision</option><option value="fix">Fix</option><option value="constraint">Constraint</option><option value="discovery">Discovery</option></select></label></div><button className="primary" type="submit">Commit to local memory<Icon name="arrow" size={16}/></button></form></section></div>}
 
-      {showSettings && <div className="modal-backdrop" role="presentation"><section className="modal small" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="close" aria-label="Close" onClick={() => setShowSettings(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="shield"/></div><p className="eyebrow">Private connection</p><h2 id="settings-title">Supermemory Local</h2><p>These credentials stay in this browser and are sent only to your local server.</p><form onSubmit={saveSettings}><label>Local API URL<input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="http://localhost:6767"/></label><label>Bearer API key<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sm_…"/></label><div className="container-preview"><span>Container</span><code>{containerTag}</code></div><button className="primary" type="submit">Save connection<Icon name="arrow" size={16}/></button></form></section></div>}
+      {showSettings && <div className="modal-backdrop" role="presentation"><section className="modal small" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="close" aria-label="Close" onClick={() => setShowSettings(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="shield"/></div><p className="eyebrow">Private connection</p><h2 id="settings-title">Supermemory Local</h2><p>These credentials stay in this browser and are sent only to your local server.</p><form onSubmit={saveSettings}><label>Local API URL<input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="http://localhost:6767"/></label><label>Bearer API key <span>(optional on localhost)</span><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sm_…"/></label><div className="container-preview"><span>Container</span><code>{containerTag}</code></div><button className="primary" type="submit">Test &amp; save connection<Icon name="arrow" size={16}/></button></form></section></div>}
     </div>
   )
 }

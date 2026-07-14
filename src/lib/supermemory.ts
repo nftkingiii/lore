@@ -10,6 +10,19 @@ export type LoreMemory = {
 
 type Connection = { apiUrl: string; apiKey: string; containerTag: string }
 
+export async function probeSupermemory(apiUrl: string) {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 4000)
+  try {
+    await fetch(apiUrl.replace(/\/$/, ''), { method: 'GET', signal: controller.signal })
+    return true
+  } catch {
+    return false
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 export const demoMemories: LoreMemory[] = [
   {
     title: 'Centralized authentication in the API client',
@@ -37,14 +50,18 @@ export const demoMemories: LoreMemory[] = [
   },
 ]
 
-function headers(apiKey: string) {
-  return { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }
+function headers(apiUrl: string, apiKey: string) {
+  const hostname = new URL(apiUrl).hostname
+  const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+  return {
+    'Content-Type': 'application/json',
+    ...(!isLoopback && apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  }
 }
 
 export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connection & { memory: Omit<LoreMemory, 'date' | 'commit' | 'confidence'> | { title: string; content: string; file: string; type: string } }) {
-  if (!apiKey) throw new Error('Missing local API key')
   const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v3/documents`, {
-    method: 'POST', headers: headers(apiKey),
+    method: 'POST', headers: headers(apiUrl, apiKey),
     body: JSON.stringify({
       content: `[${memory.type.toUpperCase()}] ${memory.title}\n\n${memory.content}\n\nFile: ${memory.file || 'repository-wide'}`,
       containerTag,
@@ -56,9 +73,8 @@ export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connec
 }
 
 export async function searchMemories({ apiUrl, apiKey, containerTag, query }: Connection & { query: string }): Promise<LoreMemory[]> {
-  if (!apiKey) throw new Error('Missing local API key')
   const response = await fetch(`${apiUrl.replace(/\/$/, '')}/v4/search`, {
-    method: 'POST', headers: headers(apiKey),
+    method: 'POST', headers: headers(apiUrl, apiKey),
     body: JSON.stringify({ q: query, containerTag, limit: 6, rerank: true, rewriteQuery: true }),
   })
   if (!response.ok) throw new Error(`Supermemory search failed (${response.status})`)
