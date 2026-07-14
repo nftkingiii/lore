@@ -91,7 +91,7 @@ export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connec
 export async function searchMemories({ apiUrl, apiKey, containerTag, query }: Connection & { query: string }): Promise<LoreMemory[]> {
   const response = await fetch(`${requestBase(apiUrl)}/v4/search`, {
     method: 'POST', headers: headers(apiUrl, apiKey),
-    body: JSON.stringify({ q: query, containerTag, limit: 6, rerank: true, rewriteQuery: true }),
+    body: JSON.stringify({ q: query, containerTag, limit: 6, searchMode: 'hybrid' }),
   })
   if (!response.ok) throw new Error(`Supermemory search failed (${response.status})`)
   const payload = await response.json()
