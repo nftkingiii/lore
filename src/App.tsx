@@ -1,15 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import {
   type LoreMemory,
+  type LocalDocument,
   addMemory,
+  addRepositoryFile,
   demoMemories,
+  getDocumentStatus,
+  listDocuments,
   probeSupermemory,
   searchMemories,
 } from './lib/supermemory'
 
-type IconName = 'search' | 'plus' | 'branch' | 'file' | 'spark' | 'clock' | 'shield' | 'arrow' | 'x' | 'chevron'
+type IconName = 'search' | 'plus' | 'branch' | 'file' | 'spark' | 'clock' | 'shield' | 'arrow' | 'x' | 'chevron' | 'folder' | 'stop'
 
 const paths: Record<IconName, React.ReactNode> = {
   search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
@@ -22,6 +26,8 @@ const paths: Record<IconName, React.ReactNode> = {
   arrow: <><path d="M5 12h14M14 7l5 5-5 5"/></>,
   x: <><path d="m6 6 12 12M18 6 6 18"/></>,
   chevron: <path d="m14 6-6 6 6 6"/>,
+  folder: <><path d="M3 6h7l2 2h9v10H3z"/><path d="M3 8V5h7l2 3"/></>,
+  stop: <rect x="7" y="7" width="10" height="10" rx="1"/>,
 }
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
@@ -39,6 +45,7 @@ function App() {
   const [query, setQuery] = useState('Why did we move authentication into the API client?')
   const [results, setResults] = useState<LoreMemory[]>(demoMemories.slice(0, 2))
   const [isSearching, setIsSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
   const [isConnecting, setIsConnecting] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('lore-sidebar-collapsed') === 'true')
@@ -46,21 +53,50 @@ function App() {
   const [notice, setNotice] = useState('Demo memories · connect Local to search your own repo')
   const [showCapture, setShowCapture] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showBootstrap, setShowBootstrap] = useState(false)
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('lore-api-key') ?? '')
   const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('lore-api-url') ?? 'http://localhost:6767')
   const [capture, setCapture] = useState({ title: '', content: '', file: '', type: 'decision' })
+  const [repository, setRepository] = useState(() => localStorage.getItem('lore-repository') ?? 'lore')
+  const [repositoryDraft, setRepositoryDraft] = useState(repository)
+  const [documents, setDocuments] = useState<LocalDocument[]>([])
+  const [documentTotal, setDocumentTotal] = useState(0)
+  const [isTimelineLoading, setIsTimelineLoading] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [importProgress, setImportProgress] = useState({ current: 0, total: 0, phase: '', failed: 0 })
+  const [isCapturing, setIsCapturing] = useState(false)
+  const searchController = useRef<AbortController | null>(null)
 
-  const containerTag = useMemo(() => 'lore_localhost-hack-quick', [])
+  const containerTag = useMemo(() => `lore_${repository.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'repository'}`, [repository])
+  const fileCount = useMemo(() => new Set(documents.map((document) => document.file).filter((file) => file !== 'repository-wide')).size, [documents])
+
+  const refreshDocuments = useCallback(async (showLoading = true) => {
+    if (showLoading) setIsTimelineLoading(true)
+    try {
+      const listed = await listDocuments({ apiUrl, apiKey, containerTag })
+      setDocuments(listed.documents)
+      setDocumentTotal(listed.total)
+    } catch {
+      if (showLoading) setNotice('Could not refresh repository memories')
+    } finally {
+      if (showLoading) setIsTimelineLoading(false)
+    }
+  }, [apiKey, apiUrl, containerTag])
 
   useEffect(() => {
     let active = true
-    probeSupermemory(apiUrl, apiKey).then((connected) => {
+    probeSupermemory(apiUrl, apiKey).then(async (connected) => {
       if (!active) return
       setIsConnected(connected)
       setNotice(connected ? 'Supermemory Local connected · ready for repository context' : 'Saved connection unavailable · start Supermemory Local')
+      if (connected) await refreshDocuments(false)
     })
     return () => { active = false }
-  }, [apiKey, apiUrl])
+  }, [apiKey, apiUrl, containerTag, refreshDocuments])
+
+  useEffect(() => {
+    if (activeView === 'timeline' && isConnected) void refreshDocuments(true)
+  }, [activeView, isConnected, containerTag, refreshDocuments])
 
   function toggleSidebar() {
     setIsSidebarCollapsed((collapsed) => {
@@ -73,21 +109,36 @@ function App() {
     event?.preventDefault()
     if (!query.trim()) return
     setIsSearching(true)
+    setSearchError('')
+    const controller = new AbortController()
+    searchController.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 12000)
     try {
-      const found = await searchMemories({ apiUrl, apiKey, containerTag, query })
+      const found = await searchMemories({ apiUrl, apiKey, containerTag, query, signal: controller.signal })
       setResults(found.length ? found : [])
       setIsConnected(true)
       setNotice(found.length ? `${found.length} local memories found` : 'No matching memories yet')
-    } catch {
-      const q = query.toLowerCase()
-      const fallback = demoMemories.filter((item) => `${item.title} ${item.content} ${item.file}`.toLowerCase().split(' ').some((word) => q.includes(word)))
-      setResults(fallback.length ? fallback : demoMemories.slice(0, 2))
+    } catch (error) {
       const connected = await probeSupermemory(apiUrl, apiKey)
       setIsConnected(connected)
-      setNotice(connected ? 'Local search unavailable · showing clearly labeled demo memories' : 'Local server unavailable · showing clearly labeled demo memories')
+      if (connected) {
+        setSearchError(error instanceof DOMException && error.name === 'AbortError' ? 'Search took longer than 12 seconds. Retry when ingestion finishes.' : 'Local search failed. Retry or check the engine logs.')
+        setNotice('Search stopped without replacing your current results')
+      } else {
+        const q = query.toLowerCase()
+        const fallback = demoMemories.filter((item) => `${item.title} ${item.content} ${item.file}`.toLowerCase().split(' ').some((word) => q.includes(word)))
+        setResults(fallback.length ? fallback : demoMemories.slice(0, 2))
+        setNotice('Local server unavailable · showing clearly labeled demo memories')
+      }
     } finally {
+      window.clearTimeout(timeout)
+      searchController.current = null
       setIsSearching(false)
     }
+  }
+
+  function cancelSearch() {
+    searchController.current?.abort()
   }
 
   async function saveSettings(event: FormEvent) {
@@ -110,15 +161,74 @@ function App() {
   async function handleCapture(event: FormEvent) {
     event.preventDefault()
     if (!capture.title || !capture.content) return
+    setIsCapturing(true)
     try {
-      await addMemory({ apiUrl, apiKey, containerTag, memory: capture })
+      const added = await addMemory({ apiUrl, apiKey, containerTag, memory: capture }) as { id?: string; status?: string }
       setIsConnected(true)
-      setNotice('Decision committed to Supermemory Local')
       setShowCapture(false)
       setCapture({ title: '', content: '', file: '', type: 'decision' })
+      setNotice(added.status === 'done' ? 'Context is searchable' : 'Context uploaded · Supermemory is processing it')
+      if (added.id) void watchDocument(added.id)
     } catch {
       setNotice('Could not reach Supermemory Local · check connection settings')
+    } finally {
+      setIsCapturing(false)
     }
+  }
+
+  async function watchDocument(id: string) {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1200))
+      try {
+        const current = await getDocumentStatus({ apiUrl, apiKey, id })
+        setNotice(current.status === 'queued' ? 'Context queued for embedding…' : current.status === 'processing' ? 'Building searchable repository memory…' : current.status === 'failed' ? 'Context processing failed · check Supermemory logs' : 'Context is searchable')
+        if (current.status === 'done' || current.status === 'failed') {
+          await refreshDocuments(false)
+          return
+        }
+      } catch { return }
+    }
+    setNotice('Context is still processing · you can keep working')
+  }
+
+  function chooseRepositoryFiles(files: FileList | null) {
+    if (!files) return
+    const allowed = /\.(md|mdx|txt|ts|tsx|js|jsx|json|css|scss|html|py|rs|go|java|kt|swift|sol|toml|ya?ml)$/i
+    const ignored = /(^|\/)(node_modules|dist|build|coverage|\.git|\.next|\.supermemory)(\/|$)|(^|\/)(\.env($|\.)|.*\.(pem|key)|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$/i
+    const safe = Array.from(files).filter((file) => {
+      const path = file.webkitRelativePath || file.name
+      return allowed.test(path) && !ignored.test(path) && file.size <= 300_000
+    }).slice(0, 40)
+    setSelectedFiles(safe)
+    setImportProgress({ current: 0, total: safe.length, phase: safe.length ? 'ready' : 'No safe text files found', failed: 0 })
+    const root = safe[0]?.webkitRelativePath.split('/')[0]
+    if (root) setRepositoryDraft(root)
+  }
+
+  async function importRepository(event: FormEvent) {
+    event.preventDefault()
+    if (!selectedFiles.length || !repositoryDraft.trim()) return
+    const nextRepository = repositoryDraft.trim()
+    const nextContainer = `lore_${nextRepository.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-|-$/g, '') || 'repository'}`
+    setImportProgress({ current: 0, total: selectedFiles.length, phase: 'uploading', failed: 0 })
+    let failed = 0
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const file = selectedFiles[index]
+      const path = file.webkitRelativePath ? file.webkitRelativePath.split('/').slice(1).join('/') : file.name
+      try {
+        await addRepositoryFile({ apiUrl, apiKey, containerTag: nextContainer, repository: nextRepository, file: path, content: await file.text() })
+      } catch { failed += 1 }
+      setImportProgress({ current: index + 1, total: selectedFiles.length, phase: 'uploading', failed })
+    }
+    setRepository(nextRepository)
+    localStorage.setItem('lore-repository', nextRepository)
+    setImportProgress({ current: selectedFiles.length, total: selectedFiles.length, phase: 'processing', failed })
+    setNotice(`${selectedFiles.length - failed} files uploaded · Supermemory is building repository memory`)
+    window.setTimeout(() => {
+      setShowBootstrap(false)
+      setSelectedFiles([])
+      void refreshDocuments(false)
+    }, 900)
   }
 
   return (
@@ -131,8 +241,8 @@ function App() {
         </nav>
         <div className="repo-block">
           <p className="eyebrow">Current repository</p>
-          <div className="repo-name"><Icon name="branch"/><div><strong>lore</strong><span>main · clean</span></div></div>
-          <div className="repo-stats"><span>24 memories</span><span>8 files</span></div>
+          <div className="repo-name"><Icon name="branch"/><div><strong>{repository}</strong><span>{isConnected ? 'local container' : 'demo workspace'}</span></div></div>
+          <div className="repo-stats"><span>{documentTotal} memories</span><span>{fileCount} files</span></div>
         </div>
         <div className="local-card">
           <div className="local-status"><span className={isConnected ? 'status-dot online' : 'status-dot'}/><strong>{isConnected ? 'Local connected' : 'Demo mode'}</strong></div>
@@ -145,7 +255,7 @@ function App() {
       <main>
         <header className="topbar">
           <div><span className="breadcrumb">Repositories / lore</span></div>
-          <button className="capture-button" onClick={() => setShowCapture(true)}><Icon name="plus"/>Capture context</button>
+          <div className="topbar-actions"><button className="import-button" onClick={() => { setRepositoryDraft(repository); setShowBootstrap(true) }}><Icon name="folder"/>Import repository</button><button className="capture-button" onClick={() => setShowCapture(true)}><Icon name="plus"/>Capture context</button></div>
         </header>
 
         {activeView === 'ask' ? (
@@ -159,8 +269,9 @@ function App() {
             <form className="search-box" onSubmit={handleSearch}>
               <Icon name="search" size={21}/>
               <input aria-label="Ask your repository" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Why was this built this way?"/>
-              <button disabled={isSearching}>{isSearching ? 'Searching…' : 'Ask Lore'}<Icon name="arrow" size={16}/></button>
+              <button type={isSearching ? 'button' : 'submit'} onClick={isSearching ? cancelSearch : undefined}>{isSearching ? 'Stop search' : 'Ask Lore'}<Icon name={isSearching ? 'stop' : 'arrow'} size={16}/></button>
             </form>
+            {searchError && <div className="search-error" role="alert"><span>{searchError}</span><button onClick={() => void handleSearch()}>Retry</button></div>}
             <div className="suggestions" aria-label="Suggested questions">
               {suggestedQuestions.map((item) => <button key={item} onClick={() => { setQuery(item); }}>{item}</button>)}
             </div>
@@ -188,12 +299,18 @@ function App() {
             <div className="kicker"><Icon name="clock" size={16}/>Memory trail</div>
             <h1>How this repository<br/><em>became itself.</em></h1>
             <p className="timeline-intro">A local, searchable record of technical intent—not just commits.</p>
-            <div className="timeline-list">{demoMemories.map((memory, index) => <article key={memory.title}><span className="timeline-dot"/><time>{memory.date}</time><div><span className={`type ${memory.type}`}>{memory.type}</span><h3>{memory.title}</h3><p>{memory.content}</p><code>{memory.file}</code></div>{index < demoMemories.length - 1 && <span className="timeline-line"/>}</article>)}</div>
+            <div className="timeline-toolbar"><span>{isConnected ? `${documentTotal} memories in ${repository}` : 'Connect Supermemory Local to load this repository'}</span>{isConnected && <button onClick={() => void refreshDocuments(true)}>Refresh</button>}</div>
+            {isTimelineLoading ? <div className="timeline-state"><span className="loading-ring"/>Loading repository history…</div> : isConnected && documents.length === 0 ? <div className="empty-state timeline-empty"><Icon name="folder" size={24}/><h3>No repository memory yet</h3><p>Import a folder or capture the first technical decision.</p><button className="primary compact" onClick={() => setShowBootstrap(true)}>Import repository</button></div> : <div className="timeline-list">{(isConnected ? documents : demoMemories).map((memory, index, list) => {
+              const date = 'createdAt' in memory ? new Date(memory.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : memory.date
+              return <article key={'id' in memory ? memory.id : memory.title}><span className="timeline-dot"/><time>{date}</time><div><span className={`type ${memory.type}`}>{memory.type}</span>{'status' in memory && memory.status !== 'done' && <span className={`processing-status ${memory.status}`}>{memory.status}</span>}<h3>{memory.title}</h3><p>{memory.content || ('status' in memory ? `Supermemory is ${memory.status}. Content will appear when processing finishes.` : '')}</p><code>{memory.file}</code></div>{index < list.length - 1 && <span className="timeline-line"/>}</article>
+            })}</div>}
           </div>
         )}
       </main>
 
-      {showCapture && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="capture-title"><button className="close" aria-label="Close" onClick={() => setShowCapture(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="plus"/></div><p className="eyebrow">New repository memory</p><h2 id="capture-title">Capture the why</h2><p>Record the context future contributors—and future you—will need.</p><form onSubmit={handleCapture}><label>Short title<input required value={capture.title} onChange={(e) => setCapture({...capture, title: e.target.value})} placeholder="Why we chose this approach"/></label><label>Context<textarea required value={capture.content} onChange={(e) => setCapture({...capture, content: e.target.value})} placeholder="Decision, alternatives considered, and tradeoffs…" rows={5}/></label><div className="form-row"><label>File path<input value={capture.file} onChange={(e) => setCapture({...capture, file: e.target.value})} placeholder="src/lib/api.ts"/></label><label>Kind<select value={capture.type} onChange={(e) => setCapture({...capture, type: e.target.value})}><option value="decision">Decision</option><option value="fix">Fix</option><option value="constraint">Constraint</option><option value="discovery">Discovery</option></select></label></div><button className="primary" type="submit">Commit to local memory<Icon name="arrow" size={16}/></button></form></section></div>}
+      {showCapture && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="capture-title"><button className="close" aria-label="Close" onClick={() => setShowCapture(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="plus"/></div><p className="eyebrow">New repository memory</p><h2 id="capture-title">Capture the why</h2><p>Record the context future contributors—and future you—will need.</p><form onSubmit={handleCapture}><label>Short title<input required value={capture.title} onChange={(e) => setCapture({...capture, title: e.target.value})} placeholder="Why we chose this approach"/></label><label>Context<textarea required value={capture.content} onChange={(e) => setCapture({...capture, content: e.target.value})} placeholder="Decision, alternatives considered, and tradeoffs…" rows={5}/></label><div className="form-row"><label>File path<input value={capture.file} onChange={(e) => setCapture({...capture, file: e.target.value})} placeholder="src/lib/api.ts"/></label><label>Kind<select value={capture.type} onChange={(e) => setCapture({...capture, type: e.target.value})}><option value="decision">Decision</option><option value="fix">Fix</option><option value="constraint">Constraint</option><option value="discovery">Discovery</option></select></label></div><button className="primary" type="submit" disabled={isCapturing}>{isCapturing ? 'Uploading context…' : 'Commit to local memory'}{!isCapturing && <Icon name="arrow" size={16}/>}</button></form></section></div>}
+
+      {showBootstrap && <div className="modal-backdrop" role="presentation"><section className="modal bootstrap-modal" role="dialog" aria-modal="true" aria-labelledby="bootstrap-title"><button className="close" aria-label="Close" onClick={() => setShowBootstrap(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="folder"/></div><p className="eyebrow">Repository bootstrap</p><h2 id="bootstrap-title">Give Lore the starting context</h2><p>Select a repository folder. Lore imports up to 40 safe text and source files, while ignoring dependencies, builds, credentials, keys, and lockfiles.</p><form onSubmit={importRepository}><label>Repository name<input required value={repositoryDraft} onChange={(event) => setRepositoryDraft(event.target.value)} placeholder="my-project"/></label><label className="folder-picker"><input type="file" multiple ref={(input) => { if (input) input.setAttribute('webkitdirectory', '') }} onChange={(event) => chooseRepositoryFiles(event.currentTarget.files)}/><Icon name="folder" size={22}/><span><strong>{selectedFiles.length ? `${selectedFiles.length} files ready` : 'Choose repository folder'}</strong><small>Text and source files · 300 KB maximum per file</small></span></label>{importProgress.total > 0 && <div className="import-progress" role="status"><div><span>{importProgress.phase === 'ready' ? 'Ready to import' : importProgress.phase === 'processing' ? 'Uploaded · processing' : `Uploading ${importProgress.current} of ${importProgress.total}`}</span><span>{Math.round((importProgress.current / importProgress.total) * 100)}%</span></div><progress value={importProgress.current} max={importProgress.total}/>{importProgress.failed > 0 && <small>{importProgress.failed} files could not be uploaded.</small>}</div>}<div className="privacy-note"><Icon name="shield" size={16}/><span>Files go directly to your local Supermemory container. Lore does not upload them to a hosted backend.</span></div><button className="primary" type="submit" disabled={!selectedFiles.length || importProgress.phase === 'uploading'}>{importProgress.phase === 'uploading' ? 'Importing repository…' : 'Build repository memory'}{importProgress.phase !== 'uploading' && <Icon name="arrow" size={16}/>}</button></form></section></div>}
 
       {showSettings && <div className="modal-backdrop" role="presentation"><section className="modal small" role="dialog" aria-modal="true" aria-labelledby="settings-title"><button className="close" aria-label="Close" onClick={() => setShowSettings(false)}><Icon name="x"/></button><div className="modal-icon"><Icon name="shield"/></div><p className="eyebrow">Private connection</p><h2 id="settings-title">Supermemory Local</h2><p>These credentials stay in this browser and are sent only to your local server.</p><form onSubmit={saveSettings}><label>Local API URL<input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="http://localhost:6767"/></label><label>Bearer API key <span>(optional on localhost)</span><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sm_…"/></label><div className="container-preview"><span>Container</span><code>{containerTag}</code></div>{connectionMessage && <p className={isConnected ? 'connection-feedback success' : 'connection-feedback'} role="status">{connectionMessage}</p>}<button className="primary" type="submit" disabled={isConnecting}>{isConnecting ? 'Testing connection…' : 'Test & save connection'}{!isConnecting && <Icon name="arrow" size={16}/>}</button></form></section></div>}
     </div>

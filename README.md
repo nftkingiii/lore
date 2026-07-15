@@ -20,6 +20,16 @@ Lore follows the canonical Supermemory API surface:
 
 Demo fallback memories are visibly labeled and are used only when the local server is unavailable. They never masquerade as live results.
 
+## What Lore can do
+
+- **Bootstrap a repository:** select a local folder and import up to 40 safe text/source files directly into a repository-scoped Supermemory container.
+- **Capture technical intent:** record decisions, fixes, constraints, and discoveries with file-level evidence.
+- **Search with bounded latency:** hybrid retrieval stops after 12 seconds, can be cancelled, and never replaces a good answer with fallback data after a connected search error.
+- **Follow live ingestion:** see when context is queued, processing, searchable, or failed.
+- **Trace the real timeline:** browse documents from the active local container instead of a hardcoded demonstration history.
+
+Repository bootstrap ignores dependency/build directories, `.env` files, private keys, lockfiles, oversized files, and unsupported binary formats. Selected content is sent directly from the browser to Supermemory Local; Lore has no upload backend.
+
 ## Local setup
 
 Prerequisites:
@@ -75,9 +85,11 @@ Select **Test & save connection**. During local development, Vite forwards `/sup
 ### 4. Verify the workflow
 
 1. Confirm Lore shows **Connected**.
-2. Capture a repository decision or constraint.
-3. Allow ingestion to finish, then ask a question about it.
-4. Confirm the answer is labeled **Live local data** and shows matching evidence.
+2. Select **Import repository**, choose a local project folder, and build its initial memory.
+3. Wait until the upload is processing or searchable; use **Timeline** to inspect the imported history.
+4. Capture a repository decision or constraint that the source alone does not explain.
+5. Ask a question about the repository.
+6. Confirm the answer is labeled **Live local data** and shows matching evidence.
 
 ## Demo flow
 

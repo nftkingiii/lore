@@ -10,6 +10,17 @@ export type LoreMemory = {
 
 type Connection = { apiUrl: string; apiKey: string; containerTag: string }
 
+export type LocalDocument = {
+  id: string
+  title: string
+  content: string
+  file: string
+  type: LoreMemory['type']
+  status: 'queued' | 'processing' | 'done' | 'failed' | string
+  createdAt: string
+  updatedAt: string
+}
+
 function isLoopback(hostname: string) {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
 }
@@ -88,10 +99,58 @@ export async function addMemory({ apiUrl, apiKey, containerTag, memory }: Connec
   return response.json()
 }
 
-export async function searchMemories({ apiUrl, apiKey, containerTag, query }: Connection & { query: string }): Promise<LoreMemory[]> {
+export async function addRepositoryFile({ apiUrl, apiKey, containerTag, repository, file, content }: Connection & { repository: string; file: string; content: string }) {
+  const response = await fetch(`${requestBase(apiUrl)}/v3/documents`, {
+    method: 'POST', headers: headers(apiUrl, apiKey),
+    body: JSON.stringify({
+      content: `[SOURCE] ${file}\n\n${content}`,
+      containerTag,
+      customId: `lore:${repository}:${file}`,
+      metadata: { title: file, file, type: 'discovery', source: 'lore-bootstrap', repository },
+    }),
+  })
+  if (!response.ok) throw new Error(`Supermemory import failed (${response.status})`)
+  return response.json() as Promise<{ id: string; status: string }>
+}
+
+export async function listDocuments({ apiUrl, apiKey, containerTag }: Connection): Promise<{ documents: LocalDocument[]; total: number }> {
+  const response = await fetch(`${requestBase(apiUrl)}/v3/documents/list`, {
+    method: 'POST', headers: headers(apiUrl, apiKey),
+    body: JSON.stringify({ containerTags: [containerTag], includeContent: true, limit: 100, page: 1, sort: 'createdAt', order: 'desc' }),
+  })
+  if (!response.ok) throw new Error(`Supermemory list failed (${response.status})`)
+  const payload = await response.json()
+  const memories = payload.memories ?? payload.documents ?? []
+  return {
+    total: payload.pagination?.totalItems ?? memories.length,
+    documents: memories.map((document: Record<string, any>) => {
+      const metadata = document.metadata ?? {}
+      const rawContent = String(document.content ?? document.summary ?? '')
+      return {
+        id: String(document.id),
+        title: metadata.title ?? document.title ?? rawContent.split('\n')[0].replace(/^\[[A-Z]+\]\s*/, '') ?? 'Repository memory',
+        content: rawContent.replace(/^\[[A-Z]+\].*\n+/, '').replace(/\nFile:.*$/, ''),
+        file: metadata.file ?? document.filepath ?? 'repository-wide',
+        type: metadata.type ?? 'discovery',
+        status: document.status ?? 'done',
+        createdAt: document.createdAt ?? document.updatedAt ?? new Date().toISOString(),
+        updatedAt: document.updatedAt ?? document.createdAt ?? new Date().toISOString(),
+      }
+    }),
+  }
+}
+
+export async function getDocumentStatus({ apiUrl, apiKey, id }: Pick<Connection, 'apiUrl' | 'apiKey'> & { id: string }) {
+  const response = await fetch(`${requestBase(apiUrl)}/v3/documents/${encodeURIComponent(id)}`, { headers: headers(apiUrl, apiKey) })
+  if (!response.ok) throw new Error(`Supermemory status failed (${response.status})`)
+  return response.json() as Promise<{ status: string }>
+}
+
+export async function searchMemories({ apiUrl, apiKey, containerTag, query, signal }: Connection & { query: string; signal?: AbortSignal }): Promise<LoreMemory[]> {
   const response = await fetch(`${requestBase(apiUrl)}/v4/search`, {
     method: 'POST', headers: headers(apiUrl, apiKey),
     body: JSON.stringify({ q: query, containerTag, limit: 6, searchMode: 'hybrid' }),
+    signal,
   })
   if (!response.ok) throw new Error(`Supermemory search failed (${response.status})`)
   const payload = await response.json()
